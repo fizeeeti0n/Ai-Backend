@@ -14,23 +14,9 @@ import pytesseract # For OCR on images (if needed)
 load_dotenv()
 
 app = Flask(__name__)
-
-# --- Configure CORS more explicitly ---
-# In production, specify exact origins. For troubleshooting, you can keep '*'
-# But it's highly recommended to change to specific origins for security.
-FRONTEND_ORIGIN = "https://uni-ai-2q9g.onrender.com"
-CORS(app, resources={r"/*": {"origins": FRONTEND_ORIGIN, "methods": ["GET", "POST", "OPTIONS"], "headers": ["Content-Type", "Authorization"]}})
-
-# If the above CORS line doesn't fix it, uncomment the @app.after_request block below
-# and redeploy. This acts as a fallback or a more direct way to set headers.
-# @app.after_request
-# def after_request(response):
-#     response.headers.add('Access-Control-Allow-Origin', FRONTEND_ORIGIN)
-#     response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-#     response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-#     response.headers.add('Access-Control-Allow-Credentials', 'true') # If you're using cookies/auth
-#     return response
-
+# Ensure CORS is configured properly. For development, allow all origins.
+# In production, specify exact origins: origins=["http://127.0.0.1:5500", "https://your-frontend-domain.com"]
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 # --- Retrieve API Key ---
 API_KEY = os.getenv("GEMINI_API_KEY")
@@ -59,7 +45,7 @@ GEMINI_VISION_API_URL = "https://generativelanguage.googleapis.com/v1beta/models
 # pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract'
 
 @app.route('/upload', methods=['POST', 'OPTIONS'])
-@cross_origin() # This decorator is redundant if CORS is configured globally, but harmless
+@cross_origin()
 def upload_file():
     """
     Handles file uploads (PDFs and DOCX for text extraction, images for text extraction or acknowledgment).
@@ -109,6 +95,17 @@ def upload_file():
 
         # --- Handle Image Files (Optional: Add OCR here if needed) ---
         elif mimetype.startswith('image/'):
+            # Current logic: Just acknowledge receipt of image. Frontend handles base64 for multimodal.
+            # If you want to extract text from images (e.g., scanned documents), enable OCR here.
+            
+            # Option 1: Acknowledge image, no text extraction on backend (your current logic)
+            # This is fine if your AI model handles image content via Base64 from the frontend.
+            # extracted_text = "" # No text extracted on backend for this image
+            # message = 'Image received successfully (not processed for text on server).'
+            # file_type_processed = 'image'
+
+            # Option 2: Perform OCR on the image to extract text
+            # This requires Tesseract-OCR engine and pytesseract library
             try:
                 img = Image.open(io.BytesIO(file.read()))
                 extracted_text = pytesseract.image_to_string(img)
@@ -136,4 +133,128 @@ def upload_file():
 
     except Exception as e:
         print(f"Error during file processing: {e}")
-        return jsonify({'success': False, 'message': f'Server error during file processing: {str(e)}
+        return jsonify({'success': False, 'message': f'Server error during file processing: {str(e)}'}), 500
+
+@app.route('/summarize', methods=['POST', 'OPTIONS'])
+@cross_origin()
+def summarize():
+    if request.method == 'OPTIONS': return '', 200
+    if not API_KEY: return jsonify({'summary': 'API key not configured.'}), 500
+    try:
+        data = request.get_json()
+        documents = data.get('documents', [])
+        if not documents: return jsonify({'summary': 'No text documents provided to summarize.'}), 400
+        full_text = "\n\n".join(documents)
+        
+        # Ensure the prompt doesn't exceed model limits if full_text is very long
+        # Consider truncating or sending in chunks if this becomes an issue
+        prompt = f"Please summarize the following text:\n\n{full_text}"
+        
+        chat_history = [{"role": "user", "parts": [{"text": prompt}]}]
+        payload = {"contents": chat_history, "generationConfig": {"maxOutputTokens": 500}}
+        
+        response = requests.post(f"{GEMINI_TEXT_API_URL}?key={API_KEY}", headers={'Content-Type': 'application/json'}, json=payload)
+        response.raise_for_status()
+        result = response.json()
+        summary = result['candidates'][0]['content']['parts'][0]['text'] if result.get('candidates') else "Could not generate summary."
+        return jsonify({'summary': summary}), 200
+    except requests.exceptions.RequestException as req_e: 
+        print(f"API Request Error for summarize: {req_e}")
+        return jsonify({'summary': f'API Error: {str(req_e)}. Check your API key and permissions.'}), 500
+    except Exception as e: 
+        print(f"General Error for summarize: {e}")
+        return jsonify({'summary': f'Error: {str(e)}'}), 500
+
+@app.route('/ask', methods=['POST', 'OPTIONS'])
+@cross_origin()
+def ask():
+    if request.method == 'OPTIONS': return '', 200
+    if not API_KEY: return jsonify({'answer': 'API key not configured.'}), 500
+    try:
+        data = request.get_json()
+        question = data.get('question', '')
+        documents = data.get('documents', [])
+        images_b64 = data.get('images', [])
+        department = data.get('department', '')
+        chat_history = data.get('chatHistory', [])
+
+        if not question and not images_b64 and not documents: # Ensure at least one input for AI
+            return jsonify({'answer': 'No question, images, or documents provided for AI to process.'}), 400
+
+        contents_parts = []
+
+        context_text = "\n\n".join(documents)
+        if department:
+            context_text = f"The question is related to the '{department}' department.\n\n" + context_text
+
+        # Append context/question for the current turn
+        if question and context_text:
+            contents_parts.append({"text": f"Using the following context, answer the question:\n\nContext:\n{context_text}\n\nQuestion: {question}"})
+        elif question: # Only question, no docs
+            contents_parts.append({"text": question})
+        elif context_text: # Only docs, no specific question
+             contents_parts.append({"text": f"Context for AI to analyze: {context_text}"})
+        
+        for img_data_url in images_b64:
+            if ',' in img_data_url:
+                try:
+                    mime_type = img_data_url.split(';')[0].split(':')[1]
+                    base64_data = img_data_url.split(',')[1]
+                    contents_parts.append({
+                        "inlineData": {
+                            "mimeType": mime_type,
+                            "data": base64_data
+                        }
+                    })
+                except Exception as e:
+                    print(f"Error processing image data URL: {e} for {img_data_url[:50]}...")
+                    continue
+            else:
+                print(f"Warning: Malformed image data URL received: {img_data_url[:50]}...")
+                continue
+
+        final_contents = []
+        # Reconstruct chat history in the correct format for Gemini API
+        for chat_entry in chat_history:
+            # Ensure chat_entry is a dictionary and has 'role' and 'parts' or 'text'
+            if isinstance(chat_entry, dict):
+                if 'parts' in chat_entry and isinstance(chat_entry['parts'], list):
+                    final_contents.append(chat_entry)
+                elif 'text' in chat_entry: # Handle simpler history format if sent by frontend
+                    final_contents.append({"role": chat_entry.get('role', 'user'), "parts": [{"text": chat_entry['text']}]})
+        
+        # Add the current user turn
+        final_contents.append({"role": "user", "parts": contents_parts})
+
+        payload = {
+            "contents": final_contents,
+            "generationConfig": {"maxOutputTokens": 800}
+        }
+        
+        api_url = GEMINI_VISION_API_URL if images_b64 else GEMINI_TEXT_API_URL
+        
+        response = requests.post(f"{api_url}?key={API_KEY}", headers={'Content-Type': 'application/json'}, json=payload)
+        response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+        result = response.json()
+        
+        answer = "Sorry, I could not generate an answer."
+        if result.get('candidates') and result['candidates'][0].get('content') and result['candidates'][0]['content'].get('parts'):
+            for part in result['candidates'][0]['content']['parts']:
+                if 'text' in part:
+                    answer = part['text']
+                    break
+        elif result.get('error'):
+            answer = f"AI Error: {result['error'].get('message', 'Unknown API error')}. Code: {result['error'].get('code', 'N/A')}"
+            print(f"Gemini API Error Response: {result['error']}")
+
+        return jsonify({'answer': answer}), 200
+    except requests.exceptions.RequestException as req_e: 
+        print(f"API Request Error for ask: {req_e}")
+        return jsonify({'answer': f'API Error: {str(req_e)}. Check your API key, model permissions, and request format.'}), 500
+    except Exception as e: 
+        print(f"General Error for ask: {e}")
+        return jsonify({'answer': f'Error: {str(e)}'}), 500
+
+
+if __name__ == '__main__':
+    app.run(debug=True, host='127.0.0.1', port=5000) # Specify host for explicit binding

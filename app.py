@@ -255,34 +255,6 @@ def ask():
         print(f"General Error for ask: {e}")
         return jsonify({'answer': f'Error: {str(e)}'}), 500
 
-@app.route('/generate_questions', methods=['POST', 'OPTIONS'])
-@cross_origin()
-def generate_questions():
-    if request.method == 'OPTIONS': return '', 200
-    if not API_KEY: return jsonify({'questions': 'API key not configured.'}), 500
-    try:
-        data = request.get_json()
-        documents = data.get('documents', [])
-        if not documents: return jsonify({'questions': 'No text documents provided to generate questions from.'}), 400
-        full_text = "\n\n".join(documents)
-
-        # Prompt for question generation
-        prompt = f"Based on the following text, generate 5-10 insightful questions that can be answered directly from the text. Present them as a numbered list.\n\nText:\n{full_text}"
-        
-        payload = {"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": {"maxOutputTokens": 500}}
-        
-        response = requests.post(f"{GEMINI_TEXT_API_URL}?key={API_KEY}", headers={'Content-Type': 'application/json'}, json=payload)
-        response.raise_for_status()
-        result = response.json()
-        
-        questions = result['candidates'][0]['content']['parts'][0]['text'] if result.get('candidates') else "Could not generate questions."
-        return jsonify({'questions': questions}), 200
-    except requests.exceptions.RequestException as req_e: 
-        print(f"API Request Error for generate_questions: {req_e}")
-        return jsonify({'questions': f'API Error: {str(req_e)}. Check your API key and permissions.'}), 500
-    except Exception as e: 
-        print(f"General Error for generate_questions: {e}")
-        return jsonify({'questions': f'Error: {str(e)}'}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='127.0.0.1', port=5000) # Specify host for explicit binding

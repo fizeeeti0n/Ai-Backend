@@ -38,3 +38,4 @@ ENV FLASK_RUN_HOST=0.0.0.0
 # Command to run the Flask application using Gunicorn
 # 'app:app' means it will look for a Flask app instance named 'app' in 'app.py'
 CMD ["gunicorn", "--bind", "0.0.0.0:8000", "app:app"]
+

@@ -36,7 +36,7 @@ GEMINI_VISION_API_URL = "https://generativelanguage.googleapis.com/v1beta/models
 # --- Configure Tesseract CMD Path (if not in system PATH) ---
 # Uncomment and set the path if Tesseract is not in your system's PATH
 # pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract' # Example for Linux/macOS
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe' # Example for Windows - ENSURE THIS PATH IS CORRECT!
+pytesseract.pytesseract.tesseract_cmd = os.getenv('TESSERACT_CMD_PATH', '/usr/bin/tesseract')
 
 @app.route('/upload', methods=['POST', 'OPTIONS'])
 @cross_origin()

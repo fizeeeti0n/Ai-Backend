@@ -1,6 +1,7 @@
 # Use an official Python runtime as a parent image
-# We choose a version compatible with Render's typical Python versions and your app
-FROM python:3.9-slim-buster
+# We are upgrading from 'buster' to 'bullseye' because buster repositories are EOL.
+# python:3.9-slim-bullseye provides a stable and supported base.
+FROM python:3.9-slim-bullseye
 
 # Set the working directory in the container
 WORKDIR /app

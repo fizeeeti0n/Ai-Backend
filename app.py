@@ -31,7 +31,6 @@ if not API_KEY:
 
 # --- Define Gemini API URLs ---
 GEMINI_TEXT_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-# Changed GEMINI_VISION_API_URL to use gemini-2.0-flash as requested
 GEMINI_VISION_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
 # --- Configure Tesseract CMD Path (if not in system PATH) ---
@@ -146,26 +145,58 @@ def summarize():
     try:
         data = request.get_json()
         documents = data.get('documents', [])
-        if not documents: return jsonify({'summary': 'No text documents provided to summarize.'}), 400
-        full_text = "\n\n".join(documents)
-        
-        # Enhanced prompt for summarization
-        prompt = f"""As UniStudy AI, your purpose is to distill complex information into easily digestible summaries.
-        Please provide a concise, well-structured, and highly informative summary of the following text.
-        Your summary should be designed for maximum readability and understanding, using Markdown for:
-        -   **Clear Headings** (e.g., `## Key Points`, `## Overview`)
-        -   **Bullet points** or **numbered lists** for main ideas and critical details.
-        -   **Bold text** for emphasizing important terms, concepts, or keywords.
-        -   Maintain a professional, intelligent, and helpful tone, similar to an advanced AI assistant.
+        images_b64 = data.get('images', []) # Get image base64 data
+        department = data.get('department', '')
+        # stream = data.get('stream', False) # This variable is not used in the current implementation for summarize response
 
-        Text to summarize:
-        {full_text}
-        """
+        # Check if any content (text or images) is provided
+        if not documents and not images_b64:
+            return jsonify({'summary': 'No text documents or images provided to summarize.'}), 400
+
+        contents_parts = []
         
-        chat_history = [{"role": "user", "parts": [{"text": prompt}]}]
-        payload = {"contents": chat_history, "generationConfig": {"maxOutputTokens": 500}}
+        # Build prompt for summarization, explicitly mentioning images if present
+        summary_prompt_text = """As UniStudy AI, your purpose is to distill complex information into easily digestible summaries.
+Please provide a concise, well-structured, and highly informative summary of the following content.
+Your summary should be designed for maximum readability and understanding, using Markdown for:
+-   **Clear Headings** (e.g., `## Key Points`, `## Overview`)
+-   **Bullet points** or **numbered lists** for main ideas and critical details.
+-   **Bold text** (`**important term**`) for emphasizing important terms, definitions, or crucial points.
+-   Maintain a professional, intelligent, and helpful tone, similar to an advanced AI assistant.
+"""
+        if documents:
+            summary_prompt_text += f"\n\nHere is the text content to summarize:\n{'\n\n'.join(documents)}"
+        if images_b64:
+            summary_prompt_text += f"\n\nHere are the images to summarize:"
+
+        contents_parts.append({"text": summary_prompt_text})
+
+        # Add image data to contents_parts if available
+        for img_data_url in images_b64:
+            if ',' in img_data_url:
+                try:
+                    mime_type = img_data_url.split(';')[0].split(':')[1]
+                    base64_data = img_data_url.split(',')[1]
+                    contents_parts.append({
+                        "inlineData": {
+                            "mimeType": mime_type,
+                            "data": base64_data
+                        }
+                    })
+                except Exception as e:
+                    print(f"Error processing image data URL in /summarize: {e} for {img_data_url[:50]}...")
+                    continue
         
-        response = requests.post(f"{GEMINI_TEXT_API_URL}?key={API_KEY}", headers={'Content-Type': 'application/json'}, json=payload)
+        payload = {
+            "contents": [{"role": "user", "parts": contents_parts}], # Wrap contents_parts in a user role
+            "generationConfig": {"maxOutputTokens": 500}
+        }
+
+        # Determine which Gemini model to use based on presence of images
+        use_vision_model = bool(images_b64)
+        api_url_to_use = GEMINI_VISION_API_URL if use_vision_model else GEMINI_TEXT_API_URL
+
+        response = requests.post(f"{api_url_to_use}?key={API_KEY}", headers={'Content-Type': 'application/json'}, json=payload)
         response.raise_for_status()
         result = response.json()
         summary = "Could not generate summary."

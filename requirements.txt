@@ -1,9 +1,9 @@
 Flask
 Flask-Cors
 PyPDF2
-requests
-python-dotenv
 python-docx
 Pillow
 pytesseract
+requests
+python-dotenv
 gunicorn

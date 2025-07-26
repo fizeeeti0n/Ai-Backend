@@ -6,12 +6,10 @@ FROM python:3.9-slim-bullseye
 # Set the working directory in the container
 WORKDIR /app
 
-# Install Tesseract OCR and its language data
-# This step requires root privileges, which are available during Docker image build
-# The 'libtesseract-dev' package provides development headers, which might be needed
-# by pytesseract's underlying C components, though 'tesseract-ocr' provides the executable.
+# Install Tesseract OCR and its language data, plus essential image processing libraries
+# libjpeg-dev for JPEG support, zlib1g-dev for PNG support (used by Pillow)
 RUN apt-get update && \
-    apt-get install -y tesseract-ocr libtesseract-dev && \
+    apt-get install -y tesseract-ocr libtesseract-dev libjpeg-dev zlib1g-dev && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 

@@ -40,6 +40,12 @@ GEMINI_VISION_API_URL = "https://generativelanguage.googleapis.com/v1beta/models
 # This path should match the installation location within the Dockerfile
 pytesseract.pytesseract.tesseract_cmd = os.getenv('TESSERACT_CMD_PATH', '/usr/bin/tesseract')
 
+# --- Gunicorn Timeout Configuration ---
+# Get Gunicorn timeout from environment variable, default to 120 seconds (2 minutes)
+# This helps prevent WORKER TIMEOUTs for long-running OCR tasks.
+GUNICORN_TIMEOUT = int(os.getenv('GUNICORN_TIMEOUT', 120))
+
+
 @app.route('/upload', methods=['POST', 'OPTIONS'])
 @cross_origin()
 def upload_file():
@@ -97,16 +103,27 @@ def upload_file():
         elif mimetype.startswith('image/'):
             try:
                 img = Image.open(file_io)
+                
+                # --- Image Preprocessing for OCR ---
                 # Convert image to RGB if it's not (e.g., for PNGs with alpha channel)
                 if img.mode != 'RGB':
                     img = img.convert('RGB')
 
+                # Resize large images to prevent memory issues and speed up OCR
+                # Max dimension (width or height) will be scaled to MAX_DIMENSION if larger
+                MAX_DIMENSION = 2000 # pixels
+                if img.width > MAX_DIMENSION or img.height > MAX_DIMENSION:
+                    # Image.Resampling.LANCZOS is a high-quality downsampling filter
+                    img.thumbnail((MAX_DIMENSION, MAX_DIMENSION), Image.Resampling.LANCZOS)
+                    print(f"Resized image for OCR to: {img.width}x{img.height}")
+
                 # Perform OCR
                 extracted_text = pytesseract.image_to_string(img)
                 
-                # Generate base64 for multimodal AI
+                # Generate base64 for multimodal AI (using the potentially resized image)
                 buffered = io.BytesIO()
-                img.save(buffered, format="PNG") # Save as PNG for consistent base64
+                # Save as PNG for consistent base64 and to avoid potential issues with other formats
+                img.save(buffered, format="PNG") 
                 image_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
 
                 if not extracted_text.strip():
@@ -436,3 +453,4 @@ def generate_questions():
 
 if __name__ == '__main__':
     app.run(debug=True, host='localhost', port=5000)
+
